@@ -2,10 +2,6 @@
 
 ## API Design
 
-* we should separate partitioning from access behavior because
-  - if partitioning is directly used without data, access behavior makes no sense
-  - if two data structures want to use the same partitioning, it is strange to "copy" from an struct specifying another access behavior
-
 * at points calling allowRepartition, LAIK needs to copy data around
   - the application may want to specify access behaviour before and after for all used LAIK data, to not uselessly need data transfers
   - API: if data is not needed / not written to yet, we should mark that

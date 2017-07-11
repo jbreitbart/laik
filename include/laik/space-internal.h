@@ -109,10 +109,6 @@ struct _Laik_Partitioning {
     Laik_Space* space; // space to partition
     int pdim; // for 2d/3d: dimension to partition
 
-    Laik_DataFlow flow;
-    bool copyIn, copyOut;
-    Laik_ReductionOperation redOp;
-
     Laik_Partitioner* partitioner;
 
     // partition borders (calculated lazy)
@@ -122,10 +118,24 @@ struct _Laik_Partitioning {
     // head of list of data containers with this paritioning active
     Laik_Data* firstPartitioningUser;
 
-     // for list of partitionings same space
+    // for list of partitionings same space
     Laik_Partitioning* nextSpaceUser;
     // for list of partitionings same space
     Laik_Partitioning* nextGroupUser;
+    // list of access phases for this partitioning
+    Laik_AccessPhase* first_accessPhase;
+};
+
+
+struct _Laik_AccessPhase {
+    char* name; // for debugging
+    int id;     // for debugging
+
+    Laik_DataFlow flow;
+    Laik_Partitioning* partitioning;
+
+    // linked list of access phases for partitioning
+    Laik_AccessPhase* next;
 };
 
 // add/remove data container as user to/from partitioning

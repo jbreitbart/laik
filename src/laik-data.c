@@ -74,7 +74,7 @@ Laik_Data* laik_alloc(Laik_Group* g, Laik_Space* s, Laik_Type* t)
     d->backend_data = 0;
     d->defaultPartitionType = LAIK_PT_Block;
     d->defaultFlow = LAIK_DF_None;
-    d->activePartitioning = 0;
+    d->activeAccessPhase = 0;
     d->nextPartitioningUser = 0;
     d->activeMappings = 0;
     d->allocator = 0; // default: malloc/free
@@ -376,25 +376,30 @@ void initMaps(Laik_Transition* t,
 
 
 // set and enforce partitioning
-void laik_set_partitioning(Laik_Data* d, Laik_Partitioning* p)
+void laik_switch_to_accessphase(Laik_Data* d, Laik_AccessPhase* ap)
 {
+    Laik_Partitioning* p = ap ? ap->partitioning : 0;
+
     // new partitioning needs to be defined over same LAIK task group
     if (p)
         assert(p->group == d->group);
 
     // calculate borders (TODO: may need global communication)
-    laik_update_partitioning(p);
+    if (p)
+        laik_update_partitioning(p);
 
     // active partitioning must have borders set
-    if (d->activePartitioning)
-        assert(d->activePartitioning->bordersValid);
+    if (d->activeAccessPhase) {
+        assert(d->activeAccessPhase->partitioning);
+        assert(d->activeAccessPhase->partitioning->bordersValid);
+    }
 
     // TODO: convert to realloc (with taking over layout)
     Laik_MappingList* fromList = d->activeMappings;
     Laik_MappingList* toList = prepareMaps(d, p, 0);
 
     // calculate actions to be done for switching
-    Laik_Transition* t = laik_calc_transitionP(d->activePartitioning, p);
+    Laik_Transition* t = laik_calc_transitionP(d->activeAccessPhase, ap);
 
     // let backend do send/recv/reduce actions
     // TODO: use async interface
@@ -409,38 +414,46 @@ void laik_set_partitioning(Laik_Data* d, Laik_Partitioning* p)
     if (t->initCount > 0)
         initMaps(t, toList, fromList);
 
-    // free old mapping/partitioning
+    // free old mapping/access phase
     if (fromList)
         freeMaps(fromList);
 
-    if (d->activePartitioning) {
-        laik_removePartitioningUser(d->activePartitioning, d);
-        laik_free_partitioning(d->activePartitioning);
+    if (d->activeAccessPhase) {
+        laik_removePartitioningUser(d->activeAccessPhase->partitioning, d);
+        laik_free_accessphase(d->activeAccessPhase);
     }
 
     // set new mapping/partitioning active
-    d->activePartitioning = p;
-    if (p)
-        laik_addPartitioningUser(p, d);
+    d->activeAccessPhase = ap;
+    if (ap)
+        laik_addPartitioningUser(ap->partitioning, d);
+
     d->activeMappings = toList;
 }
 
 // get slice number <n> in own partition
 Laik_Slice* laik_data_slice(Laik_Data* d, int n)
 {
-    if (d->activePartitioning == 0) return 0;
-    return laik_my_slice(d->activePartitioning, n);
+    Laik_Partitioning* p = 0;
+    if (d->activeAccessPhase)
+        p = d->activeAccessPhase->partitioning;
+    if (p == 0) return 0;
+    return laik_my_slice(p, n);
 }
 
-Laik_Partitioning* laik_set_new_partitioning(Laik_Data* d,
-                                             Laik_PartitionType pt,
-                                             Laik_DataFlow flow)
+Laik_AccessPhase*
+laik_switchto_new_accessphase(Laik_Data* d,
+                              Laik_PartitionType pt,
+                              Laik_DataFlow flow)
 {
     Laik_Partitioning* p;
-    p = laik_new_base_partitioning(d->group, d->space, pt, flow);
-    laik_set_partitioning(d, p);
+    Laik_AccessPhase* ap;
 
-    return p;
+    p = laik_new_base_partitioning(d->group, d->space, pt);
+    ap = laik_new_accessphase(p, flow);
+    laik_switch_to_accessphase(d, ap);
+
+    return ap;
 }
 
 
@@ -449,9 +462,10 @@ void laik_fill_double(Laik_Data* d, double v)
     double* base;
     uint64_t count, i;
 
+    if (!d->activeAccessPhase) return;
     laik_map_def1(d, (void**) &base, &count);
     // TODO: partitioning can have multiple slices
-    assert(laik_my_slicecount(d->activePartitioning) == 1);
+    assert(laik_my_slicecount(d->activeAccessPhase->partitioning) == 1);
     for (i = 0; i < count; i++)
         base[i] = v;
 }
@@ -494,18 +508,18 @@ Laik_LayoutType laik_map_layout_type(Laik_Mapping* m)
 // make own partition available for direct access in local memory
 Laik_Mapping* laik_map(Laik_Data* d, int n, Laik_Layout* layout)
 {
-    Laik_Partitioning* p;
+    Laik_AccessPhase* ap;
 
-    if (!d->activePartitioning)
-        laik_set_new_partitioning(d,
-                                  d->defaultPartitionType,
-                                  d->defaultFlow);
+    if (!d->activeAccessPhase)
+        laik_switchto_new_accessphase(d,
+                                      d->defaultPartitionType,
+                                      d->defaultFlow);
 
-    p = d->activePartitioning;
+    ap = d->activeAccessPhase;
 
     // lazy allocation
     if (!d->activeMappings) {
-        d->activeMappings = prepareMaps(d, p, layout);
+        d->activeMappings = prepareMaps(d, ap->partitioning, layout);
         if (d->activeMappings == 0)
             return 0;
     }
@@ -535,9 +549,11 @@ Laik_Mapping* laik_map_def(Laik_Data* d, int n, void** base, uint64_t* count)
 // similar to laik_map, but force a default mapping with only 1 slice
 Laik_Mapping* laik_map_def1(Laik_Data* d, void** base, uint64_t* count)
 {
+    if (!d->activeAccessPhase) return 0;
+
     Laik_Layout* l = laik_new_layout(LAIK_LT_Default1Slice);
     Laik_Mapping* m = laik_map(d, 0, l);
-    int n = laik_my_slicecount(d->activePartitioning);
+    int n = laik_my_slicecount(d->activeAccessPhase->partitioning);
     if (n > 1)
         laik_log(LAIK_LL_Panic, "Request for single continuous mapping, "
                                 "but partition with %d slices!\n", n);

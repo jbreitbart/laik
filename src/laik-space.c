@@ -10,11 +10,14 @@
 #include <stdio.h>
 #include <string.h>
 
-// counter for space ID, just for debugging
+// counter for space ID, for debugging
 static int space_id = 0;
 
-// counter for partitioning ID, just for debugging
+// counter for partitioning ID, for debugging
 static int part_id = 0;
+
+// counter for phase ID, for debugging
+static int phase_id = 0;
 
 // helpers
 
@@ -513,7 +516,6 @@ void clearBorderArray(Laik_BorderArray* a)
 //-----------------------
 // Laik_Partitioning
 
-
 // create a new partitioning on a space
 Laik_Partitioning* laik_new_partitioning(Laik_Group* g, Laik_Space* s)
 {
@@ -529,11 +531,6 @@ Laik_Partitioning* laik_new_partitioning(Laik_Group* g, Laik_Space* s)
     p->space = s;
     p->pdim = 0;
 
-    p->flow = LAIK_DF_None;
-    p->copyIn = false;
-    p->copyOut = false;
-    p->redOp = LAIK_RO_None;
-
     p->partitioner = 0;
 
     p->bordersValid = false;
@@ -548,33 +545,21 @@ Laik_Partitioning* laik_new_partitioning(Laik_Group* g, Laik_Space* s)
     return p;
 }
 
-static
-void set_flow(Laik_Partitioning* p, Laik_DataFlow flow)
-{
-    p->flow = flow;
-    p->copyIn = laik_do_copyin(flow);
-    p->copyOut = laik_do_copyout(flow);
-    p->redOp = laik_get_reduction(flow);
-}
 
 
 Laik_Partitioning*
 laik_new_base_partitioning(Laik_Group* g, Laik_Space* space,
-                           Laik_PartitionType pt,
-                           Laik_DataFlow flow)
+                           Laik_PartitionType pt)
 {
     Laik_Partitioning* p;
     p = laik_new_partitioning(g, space);
     p->partitioner = laik_new_partitioner(pt);
-    set_flow(p, flow);
 
     if (laik_logshown(1)) {
-        char s[100];
-        getDataFlowStr(s, p->flow);
-        laik_log(1, "new partitioning '%s': type %s, data flow %s, group %d\n",
+        laik_log(1, "new partitioning '%s': type %s, group %d\n",
                  p->name,
                  p->partitioner->name ? p->partitioner->name : "(none)",
-                 s, p->group->gid);
+                 p->group->gid);
     }
 
     return p;
@@ -629,14 +614,12 @@ void laik_set_partitioning_dimension(Laik_Partitioning* p, int d)
 // create a new partitioning based on another one on the same space
 Laik_Partitioning*
 laik_new_coupled_partitioning(Laik_Partitioning* base,
-                              Laik_PartitionType pt,
-                              Laik_DataFlow flow)
+                              Laik_PartitionType pt)
 {
     Laik_Partitioning* p;
     p = laik_new_partitioning(base->group, base->space);
     p->partitioner = laik_new_partitioner(pt);
     p->partitioner->base = base;
-    set_flow(p, flow);
 
     return p;
 }
@@ -646,14 +629,12 @@ laik_new_coupled_partitioning(Laik_Partitioning* base,
 Laik_Partitioning*
 laik_new_spacecoupled_partitioning(Laik_Partitioning* base,
                                    Laik_Space* s, int from, int to,
-                                   Laik_PartitionType pt,
-                                   Laik_DataFlow flow)
+                                   Laik_PartitionType pt)
 {
     Laik_Partitioning* p;
     p = laik_new_partitioning(base->group, s);
     p->partitioner = laik_new_partitioner(pt);
     p->partitioner->base = base;
-    set_flow(p, flow);
 
     assert(0); // TODO
 
@@ -661,7 +642,7 @@ laik_new_spacecoupled_partitioning(Laik_Partitioning* base,
 }
 
 // free a partitioning with related resources
-void laik_free_partitioning(Laik_Partitioning* p)
+void laik_free_partitioning(Laik_Partitioning *p)
 {
     // FIXME: needs some kind of reference counting
     return;
@@ -673,8 +654,10 @@ void laik_free_partitioning(Laik_Partitioning* p)
     }
 }
 
+
+
 // get number of slices of this task
-int laik_my_slicecount(Laik_Partitioning* p)
+int laik_my_slicecount(Laik_Partitioning *p)
 {
     laik_update_partitioning(p);
 
@@ -685,7 +668,7 @@ int laik_my_slicecount(Laik_Partitioning* p)
 }
 
 // get slice number <n> from the slices of this task
-Laik_Slice* laik_my_slice(Laik_Partitioning* p, int n)
+Laik_Slice* laik_my_slice(Laik_Partitioning *p, int n)
 {
     laik_update_partitioning(p);
 
@@ -701,7 +684,7 @@ Laik_Slice* laik_my_slice(Laik_Partitioning* p, int n)
 
 
 // give a partitioning a name, for debug output
-void laik_set_partitioning_name(Laik_Partitioning* p, char* n)
+void laik_set_partitioning_name(Laik_Partitioning *p, char* n)
 {
     p->name = strdup(n);
 }
@@ -746,6 +729,57 @@ bool laik_update_partitioning(Laik_Partitioning* p)
 }
 
 
+/// Laik_AccessPhase
+
+static
+Laik_AccessPhase* new_accessPhase(Laik_Partitioning* p)
+{
+    Laik_AccessPhase* ap;
+    ap = (Laik_AccessPhase*) malloc(sizeof(Laik_AccessPhase));
+
+    ap->id = phase_id++;
+    ap->name = strdup("phase-0     ");
+    sprintf(ap->name, "phase-%d", ap->id);
+
+    ap->partitioning = p;
+    ap->flow = LAIK_DF_None;
+
+    return ap;
+}
+
+
+// create a new access phase using a partitioning on a space
+Laik_AccessPhase* laik_new_accessphase(Laik_Partitioning* p, Laik_DataFlow flow)
+{
+    Laik_AccessPhase* ap = new_accessPhase(p);
+    ap->flow = flow;
+
+    if (laik_logshown(1)) {
+        char s[100];
+        getDataFlowStr(s, ap->flow);
+        laik_log(1, "new access phase '%s': partitioning %s, data flow %s\n",
+                 ap->name, p->name, s);
+    }
+
+    return ap;
+}
+
+// give a partitioning a name, for debug output
+void laik_set_accessphase_name(Laik_AccessPhase* ap, char* n)
+{
+    ap->name = strdup(n);
+}
+
+// free an access phase with related resources
+void laik_free_accessphase(Laik_AccessPhase *ap)
+{
+    // FIXME: we need some kind of reference counting/GC here
+
+    //laik_free_partitioning(ap->partitioning);
+    //free(ap->name);
+    //free(ap);
+}
+
 
 // append a partitioning to a partioning group whose consistency should
 // be enforced at the same point in time
@@ -755,10 +789,12 @@ void laik_append_partitioning(Laik_PartGroup* g, Laik_Partitioning* p)
 }
 
 // Calculate communication required for transitioning between partitionings
-Laik_Transition* laik_calc_transitionP(Laik_Partitioning* from,
-                                       Laik_Partitioning* to)
+Laik_Transition* laik_calc_transitionP(Laik_AccessPhase* fromAP,
+                                       Laik_AccessPhase* toAP)
 {
     Laik_Slice* slc;
+    Laik_Partitioning* from = fromAP ? fromAP->partitioning : 0;
+    Laik_Partitioning* to = toAP ? toAP->partitioning : 0;
 
 #define TRANSSLICES_MAX 100
     struct localTOp local[TRANSSLICES_MAX];
@@ -782,7 +818,7 @@ Laik_Transition* laik_calc_transitionP(Laik_Partitioning* from,
     if (from == 0) {
         // start: we come from nothing, go to initial partitioning
         assert(to != 0);
-        assert(!laik_do_copyin(to->flow));
+        assert(!laik_do_copyin(toAP->flow));
 
         space = to->space;
         group = to->group;
@@ -790,17 +826,17 @@ Laik_Transition* laik_calc_transitionP(Laik_Partitioning* from,
     else if (to == 0) {
         // end: go to nothing
         assert(from != 0);
-        assert(!laik_do_copyout(from->flow));
+        assert(!laik_do_copyout(fromAP->flow));
 
         space = from->space;
         group = from->group;
     }
     else {
         // to and from set
-        if (laik_do_copyin(to->flow)) {
+        if (laik_do_copyin(toAP->flow)) {
             // values must come from something
-            assert(laik_do_copyout(from->flow) ||
-                   laik_is_reduction(from->flow));
+            assert(laik_do_copyout(fromAP->flow) ||
+                   laik_is_reduction(fromAP->flow));
         }
         assert(from->space == to->space);
         assert(from->group == to->group);
@@ -816,17 +852,17 @@ Laik_Transition* laik_calc_transitionP(Laik_Partitioning* from,
     Laik_BorderArray* toBA = to ? to->borders : 0;
 
     // init values as next phase does a reduction?
-    if ((to != 0) && laik_is_reduction(to->flow)) {
+    if ((to != 0) && laik_is_reduction(toAP->flow)) {
 
         for(int o = toBA->off[myid]; o < toBA->off[myid+1]; o++) {
             if (laik_slice_isEmpty(dims, &(toBA->tslice[o].s))) continue;
             assert(initCount < TRANSSLICES_MAX);
-            assert(to->redOp != LAIK_RO_None);
             struct initTOp* op = &(init[initCount]);
             op->slc = toBA->tslice[o].s;
             op->sliceNo = o - toBA->off[myid];
-            op->redOp = to->redOp;
+            op->redOp = laik_get_reduction(toAP->flow);
             initCount++;
+            assert(op->redOp != LAIK_RO_None);
         }
     }
 
@@ -835,7 +871,7 @@ Laik_Transition* laik_calc_transitionP(Laik_Partitioning* from,
         // determine local slices to keep
         // (may need local copy if from/to mappings are different).
         // reductions are not handled here, but by backend
-        if (laik_do_copyout(from->flow) && laik_do_copyin(to->flow)) {
+        if (laik_do_copyout(fromAP->flow) && laik_do_copyin(toAP->flow)) {
             for(int o1 = fromBA->off[myid]; o1 < fromBA->off[myid+1]; o1++) {
                 for(int o2 = toBA->off[myid]; o2 < toBA->off[myid+1]; o2++) {
                     slc = laik_slice_intersect(dims,
@@ -855,17 +891,17 @@ Laik_Transition* laik_calc_transitionP(Laik_Partitioning* from,
         }
 
         // something to reduce?
-        if (laik_is_reduction(from->flow)) {
+        if (laik_is_reduction(fromAP->flow)) {
             // reductions always should involve everyone
             assert(from->partitioner->type == LAIK_PT_All);
-            if (laik_do_copyin(to->flow)) {
+            if (laik_do_copyin(toAP->flow)) {
                 assert(redCount < TRANSSLICES_MAX);
                 assert((to->partitioner->type == LAIK_PT_Master) ||
                        (to->partitioner->type == LAIK_PT_All));
 
                 struct redTOp* op = &(red[redCount]);
                 op->slc = *sliceFromSpace(from->space); // complete space
-                op->redOp = from->redOp;
+                op->redOp = laik_get_reduction(fromAP->flow);
                 op->rootTask = (to->partitioner->type == LAIK_PT_All) ? -1 : 0;
 
                 redCount++;
@@ -873,7 +909,7 @@ Laik_Transition* laik_calc_transitionP(Laik_Partitioning* from,
         }
 
         // something to send?
-        if (laik_do_copyout(from->flow)) {
+        if (laik_do_copyout(fromAP->flow)) {
             for(int o1 = fromBA->off[myid]; o1 < fromBA->off[myid+1]; o1++) {
                 for(int task = 0; task < count; task++) {
                     if (task == myid) continue;
@@ -897,7 +933,7 @@ Laik_Transition* laik_calc_transitionP(Laik_Partitioning* from,
         }
 
         // something to receive not coming from a reduction?
-        if (!laik_is_reduction(from->flow) && laik_do_copyin(to->flow)) {
+        if (!laik_is_reduction(fromAP->flow) && laik_do_copyin(toAP->flow)) {
             for(int task = 0; task < count; task++) {
                 if (task == myid) continue;
                 for(int o1 = fromBA->off[task]; o1 < fromBA->off[task+1]; o1++) {
@@ -957,11 +993,11 @@ Laik_Transition* laik_calc_transitionP(Laik_Partitioning* from,
         char s[1000];
         int len = getTransitionStr(s, t);
         if (len == 0)
-            laik_log(1, "transition %s => %s: (nothing)\n",
-                     from ? from->name : "(none)", to ? to->name : "(none)");
+            laik_log(1, "transition (%s => %s): (nothing)\n",
+                     fromAP ? fromAP->name : "(none)", toAP ? toAP->name : "(none)");
         else
-            laik_log(1, "transition %s => %s:\n%s",
-                     from ? from->name : "(none)", to ? to->name : "(none)",
+            laik_log(1, "transition (%s => %s):\n%s",
+                     fromAP ? fromAP->name : "(none)", toAP ? toAP->name : "(none)",
                      s);
     }
 
@@ -985,14 +1021,14 @@ void laik_enforce_consistency(Laik_Instance* i, Laik_PartGroup* g)
 
 // set a weight for each participating task in a partitioning, to be
 //  used when a repartitioning is requested
-void laik_set_partition_weights(Laik_Partitioning* p, int* w)
+void laik_set_partition_weights(Laik_AccessPhase* p, int* w)
 {
     assert(0); // TODO
 }
 
 
 // change an existing base partitioning
-void laik_repartition(Laik_Partitioning* p, Laik_PartitionType pt)
+void laik_repartition(Laik_AccessPhase* p, Laik_PartitionType pt)
 {
     assert(0); // TODO
 }

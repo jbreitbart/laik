@@ -117,8 +117,11 @@ typedef struct _Laik_Task Laik_Task;
 // an index space (regular and continous, up to 3 dimensions)
 typedef struct _Laik_Space Laik_Space;
 
-// a partitioning of an index space with same access behavior
+// a partitioning of an index space
 typedef struct _Laik_Partitioning Laik_Partitioning;
+
+// an access phase into a partition of an index space
+typedef struct _Laik_AccessPhase Laik_AccessPhase;
 
 // set of partitionings to make consistent at the same time
 typedef struct _Laik_PartGroup Laik_PartGroup;
@@ -185,8 +188,7 @@ Laik_Partitioning* laik_new_partitioning(Laik_Group* g, Laik_Space* s);
 // create a new partitioning on a space with given partitioning type
 Laik_Partitioning*
 laik_new_base_partitioning(Laik_Group* g, Laik_Space* space,
-                           Laik_PartitionType pt,
-                           Laik_DataFlow flow);
+                           Laik_PartitionType pt);
 
 // may generate the partitioner object depending on partition type
 // to set a custom partitioner, call laik_set_partitioner first
@@ -208,16 +210,14 @@ void laik_set_partitioning_dimension(Laik_Partitioning* p, int d);
 // create a new partitioning based on another one on the same space
 Laik_Partitioning*
 laik_new_coupled_partitioning(Laik_Partitioning* base,
-                              Laik_PartitionType pt,
-                              Laik_DataFlow flow);
+                              Laik_PartitionType pt);
 
 // create a new partitioning based on another one on a different space
 // this also needs to know which dimensions should be coupled
 Laik_Partitioning*
 laik_new_spacecoupled_partitioning(Laik_Partitioning* base,
                                    Laik_Space* s, int from, int to,
-                                   Laik_PartitionType pt,
-                                   Laik_DataFlow flow);
+                                   Laik_PartitionType pt);
 
 // free a partitioning with related resources
 void laik_free_partitioning(Laik_Partitioning* p);
@@ -236,11 +236,22 @@ bool laik_update_partitioning(Laik_Partitioning* p);
 
 // append a partitioning to a partioning group whose consistency should
 // be enforced at the same point in time
-void laik_append_partitioning(Laik_PartGroup* g, Laik_Partitioning* p);
+void laik_append_partitioning(Laik_PartGroup* g, Laik_Partitioning *p);
+
+
+// create a new access phase using a partitioning on a space
+Laik_AccessPhase* laik_new_accessphase(Laik_Partitioning* p, Laik_DataFlow flow);
+
+// give a partitioning a name, for debug output
+void laik_set_accessphase_name(Laik_AccessPhase* ap, char* n);
+
+// free an access phase with related resources
+void laik_free_accessphase(Laik_AccessPhase *ap);
+
 
 // Calculate communication required for transitioning between partitionings
-Laik_Transition* laik_calc_transitionP(Laik_Partitioning* from,
-                                       Laik_Partitioning* to);
+Laik_Transition* laik_calc_transitionP(Laik_AccessPhase* fromAP,
+                                       Laik_AccessPhase* toAP);
 
 // Calculate communication for transitioning between partitioning groups
 Laik_Transition* laik_calc_transitionG(Laik_PartGroup* from,
@@ -251,10 +262,10 @@ void laik_enforce_consistency(Laik_Instance* i, Laik_PartGroup* g);
 
 // set a weight for each participating task in a partitioning, to be
 //  used when a repartitioning is requested
-void laik_set_partition_weights(Laik_Partitioning*p, int* w);
+void laik_set_partition_weights(Laik_AccessPhase*p, int* w);
 
 // change an existing base partitioning
-void laik_repartition(Laik_Partitioning* p, Laik_PartitionType pt);
+void laik_repartition(Laik_AccessPhase* p, Laik_PartitionType pt);
 
 // couple different LAIK instances via spaces:
 // one partition of calling task in outer space is mapped to inner space
@@ -301,6 +312,6 @@ typedef enum _Laik_RepartitionHint {
 
 // allow LAIK to change a partitioning based on external means
 // returns true if partitioning was changed
-bool allowRepartitioning(Laik_Partitioning* p);
+bool allowRepartitioning(Laik_AccessPhase* p);
 
 #endif // _LAIK_SPACE_H_
