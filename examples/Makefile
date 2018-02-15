@@ -12,6 +12,8 @@ EXAMPLES = vsum vsum2 vsum3 spmv spmv2 \
 CFLAGS = $(OPT) $(WARN) $(DEFS) -std=gnu99 -I$(SDIR)../include
 LAIKLIB = $(abspath ../liblaik.so)
 
+LDFLAGS=$(OPT) $(LAIKLIB) -lGPI2-dbg -L/home/jbreitbart/bin/gpi2/lib64 -pthread
+
 all: $(EXAMPLES)
 
 %.o: $(SDIR)%.c
@@ -26,7 +28,7 @@ vsum3: vsum3.o $(LAIKLIB)
 spmv: spmv.o $(LAIKLIB)
 
 spmv2: $(SDIR)spmv2.c $(LAIKLIB)
-	$(CC) $(CFLAGS) $(OMP_FLAGS) $< $(LAIKLIB) -o $@
+	$(CC) $(CFLAGS) $(OMP_FLAGS) $< $(LDFLAGS) -o $@
 
 jac1d: jac1d.o $(LAIKLIB)
 
@@ -39,10 +41,10 @@ markov: markov.o $(LAIKLIB)
 markov2: markov2.o $(LAIKLIB)
 
 propagation1d: $(SDIR)propagation1d.c $(LAIKLIB)
-	$(CC) $(CFLAGS) $< $(LAIKLIB) -o $@ -lm
+	$(CC) $(CFLAGS) $< $(LDFLAGS) -o $@ -lm
 
 propagation2d: $(SDIR)propagation2d.c $(LAIKLIB)
-	$(CC) $(CFLAGS) $< $(LAIKLIB) -o $@ -lm
+	$(CC) $(CFLAGS) $< $(LDFLAGS) -o $@ -lm
 
 clean:
 	rm -f *.o *~ *.ppm $(EXAMPLES)
